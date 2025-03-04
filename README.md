@@ -13,3 +13,7 @@ When I play games there is no goal. I want to do the same here.  This
 will be my repo for this. 
 
 
+I also, just realized that freaking github doesn't count my commits in like other orgs sometimes.
+It's messing up my graph when I try to replicate with my own code from sql.  That's bothersome. 
+As such, I'll be using this repo to fix any and all old missing commits.
+
