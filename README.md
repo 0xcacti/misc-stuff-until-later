@@ -5,15 +5,6 @@ for play.  Like right now, I want to understand how C single threaded multiplexi
 I'm writing a simple echo server that uses `select()` to handle multiple clients at once without threads.
 It's not a big enough project to warrant its own repo, so it goes here. I guess I will also use it to learn how poll works. 
 
-Eventually, as I do with many projects, I will completely yeet this and put in a real project
-
-
-Actually, I want to do more programming with no goal.  Just playing. 
-When I play games there is no goal. I want to do the same here.  This 
-will be my repo for this. 
-
-
-I also, just realized that freaking github doesn't count my commits in like other orgs sometimes.
-It's messing up my graph when I try to replicate with my own code from sql.  That's bothersome. 
-As such, I'll be using this repo to fix any and all old missing commits.
+I'm also going to use this to fill out my contributions chart when github doesn't show me as active because I don't have a 
+saml sso session (https://docs.github.com/en/account-and-profile/concepts/contributions-on-your-profile)
 
