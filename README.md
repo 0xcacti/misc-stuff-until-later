@@ -6,3 +6,8 @@ I'm writing a simple echo server that uses `select()` to handle multiple clients
 It's not a big enough project to warrant its own repo, so it goes here.
 
 Eventually, as I do with many projects, I will completely yeet this and put in a real project
+
+
+Actually, I want to do more programming with no goal.  Just playing. 
+When I play games there is no goal. I want to do the same here.  This 
+will be my repo for this. 
