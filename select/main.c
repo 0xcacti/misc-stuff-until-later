@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,6 +38,26 @@ int find_free_slot() {
     }
   }
   return -1;
+}
+
+char *read_file() {
+  int fd = open("2701.txt.utf-8", O_RDONLY);
+  if (fd < 0) {
+    perror("open");
+    return NULL;
+  }
+
+  size_t buf_size = 8;
+  size_t buf_len = 0;
+  char *moby = malloc(sizeof(char) * buf_size);
+  if (!moby) {
+    perror("malloc");
+    return NULL;
+  }
+
+  while (1) {
+    int
+  }
 }
 
 int start_multi_server(void) {
