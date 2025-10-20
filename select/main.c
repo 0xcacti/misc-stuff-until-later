@@ -18,16 +18,18 @@ typedef enum { STATE_NEW, STATE_CONNECTED, STATE_DISCONNECTED } state_e;
 typedef struct {
   int sockfd;
   state_e state;
-  char buffer[BUFFER_SIZE];
+  size_t offest;
+  size_t remaining;
 } clientstate_t;
 
 clientstate_t clients[MAX_CLIENTS];
 
-void init_clients() {
+void init_clients(size_t moby_len) {
   for (int i = 0; i < MAX_CLIENTS; i++) {
     clients[i].sockfd = -1;
     clients[i].state = STATE_NEW;
-    memset(&clients[i].buffer, '\0', BUFFER_SIZE);
+    clients[i].offest = 0;
+    clients[i].remaining = moby_len;
   }
 }
 
@@ -40,7 +42,7 @@ int find_free_slot() {
   return -1;
 }
 
-char *read_file() {
+char *read_file(size_t *out_len) {
   int fd = open("2701.txt.utf-8", O_RDONLY);
   if (fd < 0) {
     perror("open");
@@ -48,7 +50,6 @@ char *read_file() {
   }
 
   size_t buf_size = 8;
-  size_t buf_len = 0;
   char *moby = malloc(sizeof(char) * buf_size);
   if (!moby) {
     perror("malloc");
@@ -57,7 +58,7 @@ char *read_file() {
 
   int bytes_read = 0;
   while (1) {
-    if (buf_len + 1 >= buf_size) {
+    if (*out_len + 1 >= buf_size) {
       buf_size *= 2;
       char *new_buf = realloc(moby, buf_size);
       if (!new_buf) {
@@ -68,7 +69,7 @@ char *read_file() {
       }
       moby = new_buf;
     }
-    int n = read(fd, moby + buf_len, buf_size - buf_len);
+    int n = read(fd, moby + *out_len, buf_size - *out_len);
     if (n < 0) {
       perror("read");
       free(moby);
@@ -77,14 +78,14 @@ char *read_file() {
     } else if (n == 0) {
       break; // EOF
     }
-    buf_len += n;
+    *out_len += n;
   }
-  moby[buf_len] = '\0'; // Null-terminate the string
+  moby[*out_len] = '\0'; // Null-terminate the string
   close(fd);
   return moby;
 }
 
-int start_multi_server(void) {
+int start_multi_server(char *moby, size_t moby_len) {
   int listen_fd, conn_fd, nfds, free_slot;
   struct sockaddr_in server_addr, client_addr = {0};
   server_addr.sin_family = AF_INET;
@@ -93,7 +94,7 @@ int start_multi_server(void) {
 
   socklen_t client_len = sizeof(client_addr);
   fd_set read_fds, write_fds, except_fds;
-  init_clients();
+  init_clients(moby_len);
 
   listen_fd = socket(AF_INET, SOCK_STREAM, 0);
   if (listen_fd == -1) {
@@ -160,8 +161,7 @@ int start_multi_server(void) {
     for (int i = 0; i < MAX_CLIENTS; i++) {
       if (clients[i].sockfd == -1 || !FD_ISSET(clients[i].sockfd, &read_fds))
         continue;
-      ssize_t bytes_read =
-          read(clients[i].sockfd, clients[i].buffer, BUFFER_SIZE);
+      int bytes_read = 0;
 
       if (bytes_read <= 0) { // error reading close
         close(clients[i].sockfd);
@@ -169,7 +169,6 @@ int start_multi_server(void) {
         clients[i].sockfd = -1;
         printf("Client disconnected on error\n");
       }
-      write(clients[i].sockfd, clients[i].buffer, bytes_read);
     }
   }
   close(listen_fd);
@@ -221,7 +220,8 @@ int start_server(void) {
 }
 
 int main() {
-  char *moby = read_file();
+  size_t moby_len = 0;
+  char *moby = read_file(&moby_len);
   if (moby) {
     printf("%s\n", moby);
     free(moby);
