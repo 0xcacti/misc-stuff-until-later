@@ -224,6 +224,7 @@ int main() {
   char *moby = read_file(&moby_len);
   if (moby) {
     printf("%s\n", moby);
+    printf("File length: %zu bytes\n", moby_len);
     free(moby);
     return 0;
   }
