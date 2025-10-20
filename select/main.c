@@ -55,9 +55,33 @@ char *read_file() {
     return NULL;
   }
 
+  int bytes_read = 0;
   while (1) {
-    int
+    if (buf_len + 1 >= buf_size) {
+      buf_size *= 2;
+      char *new_buf = realloc(moby, buf_size);
+      if (!new_buf) {
+        perror("realloc");
+        free(moby);
+        close(fd);
+        return NULL;
+      }
+      moby = new_buf;
+    }
+    int n = read(fd, moby + buf_len, buf_size - buf_len);
+    if (n < 0) {
+      perror("read");
+      free(moby);
+      close(fd);
+      return NULL;
+    } else if (n == 0) {
+      break; // EOF
+    }
+    buf_len += n;
   }
+  moby[buf_len] = '\0'; // Null-terminate the string
+  close(fd);
+  return moby;
 }
 
 int start_multi_server(void) {
@@ -197,6 +221,14 @@ int start_server(void) {
 }
 
 int main() {
-  int s = start_multi_server();
-  return s;
+  char *moby = read_file();
+  if (moby) {
+    printf("%s\n", moby);
+    free(moby);
+    return 0;
+  }
+  return -1;
+
+  // int s = start_multi_server();
+  // return s;
 }
