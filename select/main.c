@@ -86,7 +86,7 @@ char *read_file(size_t *out_len) {
 }
 
 int start_multi_server(char *moby, size_t moby_len) {
-  int listen_fd, conn_fd, nfds, free_slot;
+  int listen_fd, nfds, free_slot;
   struct sockaddr_in server_addr, client_addr = {0};
   server_addr.sin_family = AF_INET;
   server_addr.sin_addr.s_addr = INADDR_ANY;
@@ -105,6 +105,7 @@ int start_multi_server(char *moby, size_t moby_len) {
   if (bind(listen_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) ==
       -1) {
     perror("bind");
+    close(listen_fd);
     return -1;
   }
 
@@ -123,13 +124,19 @@ int start_multi_server(char *moby, size_t moby_len) {
 
     // Make sure listen fd is available
     FD_SET(listen_fd, &read_fds);
-    nfds = listen_fd + 1; // a max value, socket always increases
+    nfds = listen_fd + 1;
 
     for (int i = 0; i < MAX_CLIENTS; i++) {
       if (clients[i].sockfd != -1) {
         FD_SET(clients[i].sockfd, &read_fds);
-        if (clients[i].sockfd >= nfds)
+
+        if (clients[i].remaining > 0) {
+          FD_SET(clients[i].sockfd, &write_fds);
+        }
+
+        if (clients[i].sockfd >= nfds) {
           nfds = clients[i].sockfd + 1;
+        }
       }
     }
 
@@ -139,6 +146,8 @@ int start_multi_server(char *moby, size_t moby_len) {
     }
 
     if (FD_ISSET(listen_fd, &read_fds)) {
+      client_len = sizeof(client_addr);
+
       int client_sock =
           accept(listen_fd, (struct sockaddr *)&client_addr, &client_len);
       if (client_sock == -1) {
@@ -159,8 +168,10 @@ int start_multi_server(char *moby, size_t moby_len) {
     }
 
     for (int i = 0; i < MAX_CLIENTS; i++) {
-      if (clients[i].sockfd == -1 || !FD_ISSET(clients[i].sockfd, &read_fds))
+      if (clients[i].sockfd == -1 || !FD_ISSET(clients[i].sockfd, &read_fds)) {
         continue;
+      }
+
       int bytes_read = 0;
 
       if (bytes_read <= 0) { // error reading close
