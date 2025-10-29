@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <stdio.h>
@@ -18,7 +19,8 @@ typedef enum { STATE_NEW, STATE_CONNECTED, STATE_DISCONNECTED } state_e;
 typedef struct {
   int sockfd;
   state_e state;
-  size_t offest;
+  int start;
+  size_t offset;
   size_t remaining;
 } clientstate_t;
 
@@ -28,9 +30,19 @@ void init_clients(size_t moby_len) {
   for (int i = 0; i < MAX_CLIENTS; i++) {
     clients[i].sockfd = -1;
     clients[i].state = STATE_NEW;
-    clients[i].offest = 0;
+    clients[i].start = 0;
+    clients[i].offset = 0;
     clients[i].remaining = moby_len;
   }
+}
+
+int set_nonblocking(int fd) {
+  int flags = fcntl(fd, F_GETFL, 0);
+  if (flags == -1)
+    return -1;
+  if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
+    return -1;
+  return 0;
 }
 
 int find_free_slot() {
@@ -111,7 +123,14 @@ int start_multi_server(char *moby, size_t moby_len) {
 
   if (listen(listen_fd, BACKLOG) == -1) {
     perror("listen");
-    return 0;
+    close(listen_fd);
+    return -1;
+  }
+
+  if (set_nonblocking(listen_fd) == -1) {
+    perror("fcntl");
+    close(listen_fd);
+    return -1;
   }
 
   printf("Listening on port %d\n", PORT);
@@ -129,11 +148,9 @@ int start_multi_server(char *moby, size_t moby_len) {
     for (int i = 0; i < MAX_CLIENTS; i++) {
       if (clients[i].sockfd != -1) {
         FD_SET(clients[i].sockfd, &read_fds);
-
         if (clients[i].remaining > 0) {
           FD_SET(clients[i].sockfd, &write_fds);
         }
-
         if (clients[i].sockfd >= nfds) {
           nfds = clients[i].sockfd + 1;
         }
@@ -142,43 +159,99 @@ int start_multi_server(char *moby, size_t moby_len) {
 
     if (select(nfds, &read_fds, &write_fds, &except_fds, NULL) == -1) {
       perror("select");
-      return -1;
+      break;
     }
 
     if (FD_ISSET(listen_fd, &read_fds)) {
-      client_len = sizeof(client_addr);
+      for (;;) {
+        client_len = sizeof(client_addr);
+        int client_sock =
+            accept(listen_fd, (struct sockaddr *)&client_addr, &client_len);
+        if (client_sock == -1) {
+          if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            break; // No more incoming connections
+          }
+          perror("accept");
+          break;
+        }
 
-      int client_sock =
-          accept(listen_fd, (struct sockaddr *)&client_addr, &client_len);
-      if (client_sock == -1) {
-        perror("accept");
-        continue;
-      }
-      printf("new connection from %s:%d\n", inet_ntoa(client_addr.sin_addr),
-             ntohs(client_addr.sin_port));
+        int snd = 1;
+        setsockopt(client_sock, SOL_SOCKET, SO_SNDBUF, &snd, sizeof(snd));
+        if (set_nonblocking(client_sock) == -1) {
+          perror("fcntl");
+          close(client_sock);
+          continue;
+        }
 
-      free_slot = find_free_slot();
-      if (free_slot != -1) {
-        clients[free_slot].sockfd = client_sock;
-        clients[free_slot].state = STATE_CONNECTED;
-      } else {
-        fprintf(stderr, "Server full, rejecting connection\n");
-        close(client_sock);
+        printf("new connection from %s:%d\n", inet_ntoa(client_addr.sin_addr),
+               ntohs(client_addr.sin_port));
+
+        free_slot = find_free_slot();
+        if (free_slot != -1) {
+          clients[free_slot].sockfd = client_sock;
+          clients[free_slot].state = STATE_CONNECTED;
+          clients[free_slot].offset = 0;
+          clients[free_slot].remaining = moby_len;
+        } else {
+          fprintf(stderr, "Server full, rejecting connection\n");
+          close(client_sock);
+        }
       }
     }
 
     for (int i = 0; i < MAX_CLIENTS; i++) {
-      if (clients[i].sockfd == -1 || !FD_ISSET(clients[i].sockfd, &read_fds)) {
+      if (clients[i].sockfd == -1) {
         continue;
       }
 
-      int bytes_read = 0;
+      if (FD_ISSET(clients[i].sockfd, &read_fds)) {
+        char tmp[BUFFER_SIZE];
+        ssize_t r = read(clients[i].sockfd, tmp, sizeof(tmp));
+        if (r == 0) {
+          close(clients[i].sockfd);
+          clients[i].sockfd = -1;
+          clients[i].state = STATE_DISCONNECTED;
+          continue;
+        }
+        if (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+          perror("read");
+          close(clients[i].sockfd);
+          clients[i].sockfd = -1;
+          clients[i].state = STATE_DISCONNECTED;
+          continue;
+        }
 
-      if (bytes_read <= 0) { // error reading close
-        close(clients[i].sockfd);
-        clients[i].state = STATE_DISCONNECTED;
-        clients[i].sockfd = -1;
-        printf("Client disconnected on error\n");
+        if ((r == 3 && memcmp(tmp, "run", 3) == 0) ||
+            (r == 4 && memcmp(tmp, "run\n", 4) == 0) ||
+            (r == 5 && memcmp(tmp, "run\r\n", 5) == 0)) {
+          clients[i].start = 1;
+          clients[i].offset = 0;
+          clients[i].remaining = moby_len;
+        }
+      }
+
+      if (FD_ISSET(clients[i].sockfd, &write_fds)) {
+        while (clients[i].start == 1 && clients[i].remaining > 0) {
+          size_t to_send = clients[i].remaining;
+          if (to_send > BUFFER_SIZE)
+            to_send = BUFFER_SIZE;
+          ssize_t n =
+              write(clients[i].sockfd, moby + clients[i].offset, to_send);
+          if (n > 0) {
+            clients[i].offset += n;
+            clients[i].remaining -= n;
+          } else if (n == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            break; // Can't write more right now
+          } else {
+            close(clients[i].sockfd);
+            clients[i].sockfd = -1;
+            clients[i].state = STATE_DISCONNECTED;
+            break;
+          }
+        }
+        if (clients[i].sockfd != -1 && clients[i].remaining == 0) {
+          shutdown(clients[i].sockfd, SHUT_WR);
+        }
       }
     }
   }
@@ -223,6 +296,7 @@ int start_server(void) {
     while ((bytes_read = read(client_sock, buffer, BUFFER_SIZE)) > 0) {
       write(client_sock, buffer, bytes_read);
     }
+
     printf("Client disconnected\n");
     close(client_sock);
   }
@@ -233,14 +307,12 @@ int start_server(void) {
 int main() {
   size_t moby_len = 0;
   char *moby = read_file(&moby_len);
-  if (moby) {
-    printf("%s\n", moby);
-    printf("File length: %zu bytes\n", moby_len);
-    free(moby);
-    return 0;
+  if (!moby) {
+    perror("Failed to read file");
+    return -1;
   }
-  return -1;
 
-  // int s = start_multi_server();
-  // return s;
+  int s = start_multi_server(moby, moby_len);
+  free(moby);
+  return s;
 }
