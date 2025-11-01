@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -48,6 +49,15 @@ int set_nonblocking(int fd) {
 int find_free_slot() {
   for (int i = 0; i < MAX_CLIENTS; i++) {
     if (clients[i].sockfd == -1) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+int find_slot_by_id(int sockfd) {
+  for (int i = 0; i < MAX_CLIENTS; i++) {
+    if (clients[i].sockfd == sockfd) {
       return i;
     }
   }
@@ -257,6 +267,91 @@ int start_multi_server(char *moby, size_t moby_len) {
   }
   close(listen_fd);
   return 0;
+}
+
+int start_poll_server(char *moby, size_t moby_len) {
+  int listen_fd, conn_fd, free_slot;
+  struct sockaddr_in server_addr, client_addr = {0};
+  socklen_t client_len = sizeof(client_addr);
+
+  struct pollfd fds[MAX_CLIENTS + 1];
+  int nfds = 1;
+  int opt = 1;
+
+  if ((listen_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+    perror("socket");
+    return -1;
+  }
+
+  if (setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+    perror("setsockopt");
+    close(listen_fd);
+    return -1;
+  }
+
+  memset(&server_addr, 0, sizeof(server_addr));
+  server_addr.sin_family = AF_INET;
+  server_addr.sin_addr.s_addr = INADDR_ANY;
+  server_addr.sin_port = htons(PORT);
+
+  if (bind(listen_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) <
+      0) {
+    perror("bind");
+    close(listen_fd);
+    return -1;
+  }
+
+  if (listen(listen_fd, BACKLOG) < 0) {
+    perror("listen");
+    close(listen_fd);
+    return -1;
+  }
+
+  printf("Listening on port %d\n", PORT);
+  memset(fds, 0, sizeof(fds));
+  fds[0].fd = listen_fd;
+  fds[0].events = POLLIN;
+  nfds = 1;
+
+  while (1) {
+    int ii = 1;
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+      if (clients[i].sockfd != -1) {
+        fds[ii].fd = clients[i].sockfd;
+        fds[ii].events = POLLIN;
+        ii++;
+      }
+    }
+
+    int n_events = poll(fds, nfds, -1);
+    if (n_events == -1) {
+      perror("poll");
+      return -1;
+    }
+
+    if (fds[0].revents & POLLIN) {
+      if ((conn_fd = accept(listen_fd, (struct sockaddr *)&client_addr,
+                            &client_len)) == -1) {
+        perror("accept");
+        continue;
+      }
+      printf("New connection from %s:%d\n", inet_ntoa(client_addr.sin_addr),
+             ntohs(client_addr.sin_port));
+
+      free_slot = find_free_slot();
+      if (free_slot == -1) {
+        fprintf(stderr, "Server full, rejecting connection\n");
+        close(conn_fd);
+      } else {
+        clients[free_slot].sockfd = conn_fd;
+        clients[free_slot].state = STATE_CONNECTED;
+        clients[free_slot].offset = 0;
+        clients[free_slot].remaining = moby_len;
+        nfds++;
+      }
+      n_events--;
+    }
+  }
 }
 
 int start_server(void) {
