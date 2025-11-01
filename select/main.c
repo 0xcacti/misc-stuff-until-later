@@ -351,6 +351,40 @@ int start_poll_server(char *moby, size_t moby_len) {
       }
       n_events--;
     }
+    for (int i = 0; i <= nfds && n_events > 0; i++) {
+      if (fds[i].revents & POLLIN) {
+        int slot = find_slot_by_id(fds[i].fd);
+        if (slot == -1) {
+          continue;
+        }
+        char tmp[BUFFER_SIZE];
+        ssize_t r = read(clients[slot].sockfd, tmp, sizeof(tmp));
+        if (r == 0) {
+          close(clients[slot].sockfd);
+          clients[slot].sockfd = -1;
+          clients[slot].state = STATE_DISCONNECTED;
+          nfds--;
+          continue;
+        }
+        if (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+          perror("read");
+          close(clients[slot].sockfd);
+          clients[slot].sockfd = -1;
+          clients[slot].state = STATE_DISCONNECTED;
+          nfds--;
+          continue;
+        }
+
+        if ((r == 3 && memcmp(tmp, "run", 3) == 0) ||
+            (r == 4 && memcmp(tmp, "run\n", 4) == 0) ||
+            (r == 5 && memcmp(tmp, "run\r\n", 5) == 0)) {
+          clients[slot].start = 1;
+          clients[slot].offset = 0;
+          clients[slot].remaining = moby_len;
+        }
+        n_events--;
+      }
+    }
   }
 }
 
