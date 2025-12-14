@@ -14,3 +14,5 @@ Actually, I want to do more programming with no goal.  Just playing.
 When I play games there is no goal. I want to do the same here.  This 
 will be my repo for this. 
 
+
+I'm also gonna use this repo to learn how regex's work
