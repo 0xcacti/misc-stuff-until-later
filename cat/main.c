@@ -11,7 +11,7 @@
 #include <unistd.h>
 
 static void usage() {
-  dprintf(STDERR_FILENO, "Usage: mcat [file]\n");
+  dprintf(STDERR_FILENO, "Usage: mcat [file ...]\n");
 }
 
 static void error_msg(const char *filename) {
@@ -62,18 +62,31 @@ int cat_file(const char *filename) {
 
   struct stat st;
   if (fstat(fd, &st) < 0) {
+    int saved = errno;
     close(fd);
+    errno = saved;
     return -1;
   }
+
+  if (!S_ISREG(st.st_mode)) {
+    int rc = stream_copy(fd, STDOUT_FILENO);
+    close(fd);
+    return rc;
+  }
+
   size_t sz = st.st_size;
   if (sz == 0) {
+    int saved = errno;
     close(fd);
+    errno = saved;
     return 0;
   }
 
   void *p = mmap(0, sz, PROT_READ, MAP_PRIVATE, fd, 0);
   if (p == MAP_FAILED) {
+    int saved = errno;
     close(fd);
+    errno = saved;
     return -1;
   }
 
