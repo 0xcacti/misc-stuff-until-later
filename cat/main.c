@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,9 +19,10 @@ static void error_msg(const char *filename) {
 }
 
 static int write_all(int fd, const void *buf, size_t len) {
+  const uint8_t *p = (const uint8_t *)buf;
   size_t off = 0;
   while (off < len) {
-    ssize_t n = write(fd, buf + off, len - off);
+    ssize_t n = write(fd, p + off, len - off);
     if (n < 0) {
       if (errno == EINTR) continue;
       return -1;
@@ -35,16 +37,31 @@ static int write_all(int fd, const void *buf, size_t len) {
   return 0;
 }
 
+static int stream_copy(int infd, int outfd) {
+  uint8_t buf[64 * 1024];
+  for (;;) {
+    ssize_t n = read(infd, buf, sizeof(buf));
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      return -1;
+    }
+    if (n == 0) return 0;
+    if (write_all(outfd, buf, (size_t)n) < 0) return -1;
+  }
+}
+
 int cat_file(const char *filename) {
+  if (strcmp(filename, "-") == 0) {
+    return stream_copy(STDIN_FILENO, STDOUT_FILENO);
+  }
+
   int fd = open(filename, O_RDONLY);
   if (fd < 0) {
-    error_msg(filename);
     return -1;
   }
 
   struct stat st;
   if (fstat(fd, &st) < 0) {
-    error_msg(filename);
     close(fd);
     return -1;
   }
@@ -56,26 +73,14 @@ int cat_file(const char *filename) {
 
   void *p = mmap(0, sz, PROT_READ, MAP_PRIVATE, fd, 0);
   if (p == MAP_FAILED) {
-    error_msg(filename);
     close(fd);
     return -1;
   }
 
-  if (write_all(STDOUT_FILENO, p, sz) < 0) {
-    error_msg(filename);
-    close(fd);
-    return -1;
-  }
-
-  if (munmap(p, sz) < 0) {
-    error_msg(filename);
-    close(fd);
-    return -1;
-  }
-  if (close(fd) < 0) {
-    return -1;
-  }
-  return 0;
+  int rc = write_all(STDOUT_FILENO, p, sz);
+  munmap(p, sz);
+  close(fd);
+  return rc;
 }
 
 int main(int argc, char *argv[]) {
@@ -90,10 +95,19 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  if (optind == argc) {
+    if (stream_copy(STDIN_FILENO, STDOUT_FILENO) < 0) {
+      error_msg("stdin");
+      return 1;
+    }
+    return 0;
+  }
+
   int exit_code = 0;
   for (int i = optind; i < argc; i++) {
     char *filename = argv[i];
     if (cat_file(filename) < 0) {
+      error_msg(filename);
       exit_code = 1;
     }
   }
