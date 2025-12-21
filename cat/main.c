@@ -35,6 +35,49 @@ static int write_all(int fd, const void *buf, size_t len) {
   return 0;
 }
 
+int cat_file(const char *filename) {
+  int fd = open(filename, O_RDONLY);
+  if (fd < 0) {
+    error_msg(filename);
+    return -1;
+  }
+
+  struct stat st;
+  if (fstat(fd, &st) < 0) {
+    error_msg(filename);
+    close(fd);
+    return -1;
+  }
+  size_t sz = st.st_size;
+  if (sz == 0) {
+    close(fd);
+    return 0;
+  }
+
+  void *p = mmap(0, sz, PROT_READ, MAP_PRIVATE, fd, 0);
+  if (p == MAP_FAILED) {
+    error_msg(filename);
+    close(fd);
+    return -1;
+  }
+
+  if (write_all(STDOUT_FILENO, p, sz) < 0) {
+    error_msg(filename);
+    close(fd);
+    return -1;
+  }
+
+  if (munmap(p, sz) < 0) {
+    error_msg(filename);
+    close(fd);
+    return -1;
+  }
+  if (close(fd) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
 int main(int argc, char *argv[]) {
   int ch;
 
@@ -50,50 +93,8 @@ int main(int argc, char *argv[]) {
   int exit_code = 0;
   for (int i = optind; i < argc; i++) {
     char *filename = argv[i];
-    int fd = open(filename, O_RDONLY);
-    if (fd < 0) {
-      error_msg(filename);
-      continue;
-    }
-
-    struct stat st;
-    if (fstat(fd, &st) < 0) {
-      error_msg(filename);
-      close(fd);
+    if (cat_file(filename) < 0) {
       exit_code = 1;
-      continue;
-    }
-    size_t sz = st.st_size;
-    if (sz == 0) {
-      close(fd);
-      exit_code = 1;
-      continue;
-    }
-
-    void *p = mmap(0, sz, PROT_READ, MAP_PRIVATE, fd, 0);
-    if (p == MAP_FAILED) {
-      error_msg(filename);
-      close(fd);
-      exit_code = 1;
-      continue;
-    }
-
-    if (write_all(STDOUT_FILENO, p, sz) < 0) {
-      error_msg(filename);
-      close(fd);
-      exit_code = 1;
-      continue;
-    }
-
-    if (munmap(p, sz) < 0) {
-      error_msg(filename);
-      close(fd);
-      exit_code = 1;
-      continue;
-    }
-    if (close(fd) < 0) {
-      exit_code = 1;
-      continue;
     }
   }
   return exit_code;
