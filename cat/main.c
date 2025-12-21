@@ -10,14 +10,29 @@
 #include <unistd.h>
 
 static void usage() {
-  fprintf(stderr, "Usage: mcat [file]\n");
+  dprintf(STDERR_FILENO, "Usage: mcat [file]\n");
 }
 
 static void error_msg(const char *filename) {
-  fprintf(stderr, "mcat: %s: %s\n", filename, strerror(errno));
+  dprintf(STDERR_FILENO, "mcat: %s: %s\n", filename, strerror(errno));
 }
 
-static void write_all(int fd, const void *buf, size_t len) {
+static int write_all(int fd, const void *buf, size_t len) {
+  size_t off = 0;
+  while (off < len) {
+    ssize_t n = write(fd, buf + off, len - off);
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      return -1;
+    }
+    if (n == 0) {
+      errno = EIO;
+      return -1;
+    }
+    off += (size_t)n;
+  }
+
+  return 0;
 }
 
 int main(int argc, char *argv[]) {
@@ -63,7 +78,7 @@ int main(int argc, char *argv[]) {
       continue;
     }
 
-    if (write(1, p, sz) < 0) {
+    if (write_all(STDOUT_FILENO, p, sz) < 0) {
       error_msg(filename);
       close(fd);
       exit_code = 1;
@@ -76,7 +91,10 @@ int main(int argc, char *argv[]) {
       exit_code = 1;
       continue;
     }
-    close(fd);
+    if (close(fd) < 0) {
+      exit_code = 1;
+      continue;
+    }
   }
   return exit_code;
 }
