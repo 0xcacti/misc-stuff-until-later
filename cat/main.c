@@ -70,15 +70,26 @@ int cat_file(const char *filename) {
 
   if (!S_ISREG(st.st_mode)) {
     int rc = stream_copy(fd, STDOUT_FILENO);
-    close(fd);
-    return rc;
+    int stream_errno = 0;
+    if (rc < 0) stream_errno = errno;
+    int close_rc = close(fd);
+    int close_errno = 0;
+    if (close_rc < 0) close_errno = errno;
+    if (rc < 0) {
+      errno = stream_errno;
+      return -1;
+    }
+    if (close_rc < 0) {
+      errno = close_errno;
+      return -1;
+    }
+
+    return 0;
   }
 
   size_t sz = st.st_size;
   if (sz == 0) {
-    int saved = errno;
     close(fd);
-    errno = saved;
     return 0;
   }
 
@@ -91,9 +102,33 @@ int cat_file(const char *filename) {
   }
 
   int rc = write_all(STDOUT_FILENO, p, sz);
-  munmap(p, sz);
-  close(fd);
-  return rc;
+  int write_errno = 0;
+  if (rc < 0) write_errno = errno;
+
+  int munmap_rc = munmap(p, sz);
+  int munmap_err = 0;
+  if (munmap_rc < 0) munmap_err = errno;
+
+  int close_rc = close(fd);
+  int close_err = 0;
+  if (close_rc < 0) close_err = errno;
+
+  if (rc < 0) {
+    errno = write_errno;
+    return -1;
+  }
+
+  if (munmap_rc < 0) {
+    errno = munmap_err;
+    return -1;
+  }
+
+  if (close_rc < 0) {
+    errno = close_err;
+    return -1;
+  }
+
+  return 0;
 }
 
 int main(int argc, char *argv[]) {
