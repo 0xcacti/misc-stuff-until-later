@@ -25,7 +25,7 @@ static void error_msg(const char *progname, const char *msg) {
   dprintf(STDERR_FILENO, "%s: %s\n", progname, msg);
 }
 
-static count_e parse_count(const char *s, int *out) {
+static count_e parse_count(const char *s, size_t *out) {
   errno = 0;
   char *end = NULL;
   long val = strtol(s, &end, 10);
@@ -37,11 +37,50 @@ static count_e parse_count(const char *s, int *out) {
   return COUNT_OK;
 }
 
+static int write_all(int fd, const void *buf, size_t len) {
+  const uint8_t *p = (const uint8_t *)buf;
+  size_t off = 0;
+  while (off < len) {
+    ssize_t n = write(fd, p + off, len - off);
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      return -1;
+    }
+    if (n == 0) {
+      errno = EIO;
+      return -1;
+    }
+    off += (size_t)n;
+  }
+  return 0;
+}
+
+static int stream_copy(int infd, int outfd, size_t *len) {
+  uint8_t buf[1008 * 64] = {0};
+  size_t sum = 0;
+  for (;;) {
+    if (sum == *len) break;
+    ssize_t n = read(infd, buf, sizeof(buf));
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      return -1;
+    }
+    if (n == 0) continue;
+    sum += n;
+    if (len && sum > *len) {
+      n = sum - *len + 1;
+      sum = *len;
+    }
+    if (write_all(outfd, buf, n) < 0) return -1;
+  }
+  return 0;
+}
+
 int main(int argc, char *argv[]) {
   int ch;
 
-  int lc = 0;
-  int cc = 0;
+  size_t lc = 0;
+  size_t cc = 0;
 
   while ((ch = getopt(argc, argv, "n:c:")) != -1) {
     switch (ch) {
@@ -59,14 +98,22 @@ int main(int argc, char *argv[]) {
         dprintf(STDERR_FILENO, "%s: illegal byte count -- %s\n", argv[0], optarg);
         return 1;
       }
+      break;
     }
     default:
       usage();
     }
+  }
 
-    if (lc > 0 && cc > 0) {
-      error_msg(argv[0], "can't combine line and byte counts");
-      return 1;
+  if (lc > 0 && cc > 0) {
+    error_msg(argv[0], "can't combine line and byte counts");
+    return 1;
+  }
+
+  if (argc == optind) {
+    size_t *bytes = cc > 0 ? &cc : NULL;
+    if (stream_copy(STDIN_FILENO, STDOUT_FILENO, bytes) < 0) {
+      error_msg(argv[0], "stdin");
     }
   }
 }
