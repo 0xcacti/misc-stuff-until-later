@@ -76,6 +76,40 @@ static int stream_copy(int infd, int outfd, size_t *len) {
   return 0;
 }
 
+int head_file(const char *filename, size_t lc, size_t cc) {
+  int fd = open(filename, O_RDONLY);
+  if (fd < 0) {
+    return -1;
+  }
+
+  struct stat st;
+  if (fstat(fd, &st) < 0) {
+    int saved = errno;
+    close(fd);
+    errno = saved;
+    return -1;
+  }
+
+  if (!S_ISREG(st.st_mode)) {
+    int rc = stream_copy(fd, STDOUT_FILENO);
+    int stream_errno = 0;
+    if (rc < 0) stream_errno = errno;
+    int close_rc = close(fd);
+    int close_errno = 0;
+    if (close_rc < 0) close_errno = errno;
+    if (rc < 0) {
+      errno = stream_errno;
+      return -1;
+    }
+    if (close_rc < 0) {
+      errno = close_errno;
+      return -1;
+    }
+
+    return 0;
+  }
+}
+
 int main(int argc, char *argv[]) {
   int ch;
 
